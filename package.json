@@ -3,7 +3,12 @@
   "private": true,
   "version": "0.4.10",
   "type": "module",
+  "bin": {
+    "llm-wiki": "./src/cli/bin/llm-wiki.mjs"
+  },
   "scripts": {
+    "build:cli": "vite build --config src/cli/vite.config.ts --logLevel error",
+    "cli": "npm run build:cli --silent && node .llm-wiki-cli-build/llm-wiki.mjs",
     "dev": "vite",
     "typecheck": "tsc --build --pretty",
     "build": "npm run typecheck && vite build",
