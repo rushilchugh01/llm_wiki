@@ -30,8 +30,9 @@ export async function packageCliBinary(root, env = process.env) {
       ? "windows"
       : "linux"
   const output = path.join(root, DIST_DIR, `${CLI_NAME}-${platform}-${arch}${ext}`)
-  const pkgBin = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "pkg.cmd" : "pkg")
-  run(pkgBin, [
+  const pkgBin = path.join(root, "node_modules", "@yao-pkg", "pkg", "lib-es5", "bin.js")
+  run(process.execPath, [
+    pkgBin,
     entry,
     "--target",
     target,
@@ -48,6 +49,10 @@ export async function packageCliBinary(root, env = process.env) {
 
 function run(command, args, options) {
   const result = spawnSync(command, args, { ...options, stdio: "inherit" })
+  if (result.error) {
+    console.error(result.error.message)
+    process.exit(1)
+  }
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
