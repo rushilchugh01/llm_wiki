@@ -11,6 +11,7 @@ export interface IngestOptions {
   recursive: boolean
   include?: string[]
   exclude?: string[]
+  ignorePaths?: string[]
   maxFiles?: number
   maxBytes?: number
   maxFileBytes?: number

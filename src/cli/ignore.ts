@@ -8,6 +8,7 @@ export interface WalkOptions {
   recursive: boolean
   include?: string[]
   exclude?: string[]
+  ignorePaths?: string[]
 }
 
 const BUILTIN_IGNORES = new Set([
@@ -74,9 +75,10 @@ export async function collectFiles(
     `Refusing to ingest broad source directory: ${root}. Choose a narrower subfolder.`,
   )
   const gitignore = await loadGitignore(root)
+  const ignoredPaths = (options.ignorePaths ?? []).map((ignoredPath) => path.resolve(ignoredPath))
   const out: string[] = []
   debug.event("scan_start", { path: root, recursive: options.recursive })
-  await collect(root, root, options, gitignore, out, debug)
+  await collect(root, root, options, gitignore, ignoredPaths, out, debug)
   debug.event("scan_done", { path: root, fileCount: out.length })
   return out.sort()
 }
@@ -129,9 +131,14 @@ async function collect(
   root: string,
   options: WalkOptions,
   gitignore: string[],
+  ignoredPaths: string[],
   out: string[],
   debug: DebugReporter,
 ): Promise<void> {
+  if (isIgnoredPath(current, ignoredPaths)) {
+    debug.event("scan_skip", { path: current, reason: "generated" })
+    return
+  }
   const stat = await fs.stat(current)
   if (stat.isFile()) {
     const rel = path.relative(root, current).replace(/\\/g, "/")
@@ -161,7 +168,7 @@ async function collect(
       debug.event("scan_skip", { path: full, reason: "not-recursive" })
       continue
     }
-    await collect(full, root, options, gitignore, out, debug)
+    await collect(full, root, options, gitignore, ignoredPaths, out, debug)
   }
 }
 
@@ -180,6 +187,15 @@ function shouldIncludeFile(filePath: string, relativePath: string, includes: str
 function wildcardMatch(value: string, pattern: string): boolean {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")
   return new RegExp(`^${escaped}$`).test(value)
+}
+
+function isIgnoredPath(candidate: string, ignoredPaths: string[]): boolean {
+  return ignoredPaths.some((ignoredPath) => isInsideDir(ignoredPath, candidate))
+}
+
+function isInsideDir(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
 }
 
 function isHomeDumpDir(sourcePath: string, homeDir: string): boolean {

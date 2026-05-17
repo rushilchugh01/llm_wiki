@@ -82,6 +82,23 @@ describe("CLI ignore and ingest", () => {
     await expect(collectFiles(dir, { recursive: false })).resolves.toHaveLength(1)
   })
 
+  it("skips caller-supplied generated project paths", async () => {
+    const dir = await tempDir()
+    await write(path.join(dir, "note.md"), "A")
+    await write(path.join(dir, "schema.md"), "generated")
+    await write(path.join(dir, "wiki", "sources", "generated.md"), "generated")
+    await write(path.join(dir, "raw", "sources", "generated.md"), "generated")
+
+    await expect(collectFiles(dir, {
+      recursive: true,
+      ignorePaths: [
+        path.join(dir, "schema.md"),
+        path.join(dir, "wiki"),
+        path.join(dir, "raw"),
+      ],
+    })).resolves.toEqual([path.join(dir, "note.md")])
+  })
+
   it("uses include as a relative-path filter", async () => {
     const dir = await tempDir()
     await write(path.join(dir, "reports", "a.md"), "A")

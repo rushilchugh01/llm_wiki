@@ -1,6 +1,6 @@
 import path from "node:path"
 import { loadConfig, type ConfigOverrides } from "./config"
-import { createProject, validateProject } from "./project"
+import { createProject, createProjectAt, ensureProject, projectIngestIgnorePaths, validateProject } from "./project"
 import { ingestPath, type IngestOptions } from "./ingest"
 import { buildSearchJson, searchPages } from "./search"
 import { pageToJson, resolvePage } from "./pages"
@@ -79,23 +79,33 @@ export function formatResult(result: unknown, json: boolean): string {
 }
 
 function createCommand(args: ParsedArgs): Promise<unknown> {
-  const parent = args.positionals[0]
+  const dest = hasFlag(args, "dest") ? pathFlag(args, "dest") : undefined
   const name = stringFlag(args, "name")
-  assertCli(parent, "Usage: llm-wiki create <parent-dir> --name <name>")
-  assertCli(name, "Usage: llm-wiki create <parent-dir> --name <name>")
+  if (dest) return createProjectAt(dest, name)
+  const parent = args.positionals[0]
+  assertCli(parent, createUsage())
+  assertCli(name, createUsage())
   return createProject(parent, name)
 }
 
 async function ingestCommand(args: ParsedArgs, debug: DebugReporter): Promise<unknown> {
-  const [project, source] = args.positionals
-  assertCli(project && source, "Usage: llm-wiki ingest <project> <path>")
-  await validateProject(project)
+  const usesFlagShape = hasFlag(args, "dest") || hasFlag(args, "source") || args.positionals.length < 2
+  const project = hasFlag(args, "dest")
+    ? pathFlag(args, "dest")
+    : stringFlag(args, "project") ?? args.positionals[0] ?? "."
+  const source = hasFlag(args, "source")
+    ? pathFlag(args, "source")
+    : args.positionals[1] ?? "."
+  assertCli(project && source, ingestUsage())
+  if (usesFlagShape) await ensureProject(project)
+  else await validateProject(project)
   const config = await loadConfig(project, process.env, configOverrides(args))
   const options: IngestOptions = {
     dryRun: Boolean(args.flags["dry-run"]),
     recursive: recursiveFlag(args, config.ingest.recursiveByDefault),
     include: listFlag(args, "include"),
     exclude: listFlag(args, "exclude"),
+    ignorePaths: projectIngestIgnorePaths(project),
     maxFiles: numberFlag(args, "max-files", config.ingest.maxFiles),
     maxBytes: numberFlag(args, "max-bytes", config.ingest.maxBytes),
     maxFileBytes: numberFlag(args, "max-file-bytes", config.ingest.maxFileBytes),
@@ -131,14 +141,25 @@ async function lintCommand(args: ParsedArgs): Promise<unknown> {
 
 function helpText(): string {
   return [
-    "llm-wiki create <parent-dir> --name <name>",
-    "llm-wiki ingest <project> <path> [--dry-run] [--recursive] [--no-recursive] [--debug]",
+    "llm-wiki create --dest <project-dir> [--name <name>]",
+    "  Legacy: llm-wiki create <parent-dir> --name <name>",
+    "llm-wiki ingest [--source <path>] [--dest <project>] [--dry-run] [--recursive] [--no-recursive] [--debug]",
+    "  Defaults: --source . --dest .",
+    "  Legacy: llm-wiki ingest <project> <path>",
     "  [--max-files 500] [--max-bytes 26214400] [--max-file-bytes 2097152]",
     "  [--provider custom] [--base-url <url>] [--api-key <key>] [--model <model>] [--reasoning off]",
     "llm-wiki search <project> <query> [--limit 10] [--type entity,concept] [--json]",
     "llm-wiki view <project> <page-or-slug> [--json]",
     "llm-wiki lint <project> [--json]",
   ].join("\n")
+}
+
+function createUsage(): string {
+  return "Usage: llm-wiki create --dest <project-dir> [--name <name>]"
+}
+
+function ingestUsage(): string {
+  return "Usage: llm-wiki ingest [--source <path>] [--dest <project>]"
 }
 
 function humanize(result: unknown): string {
@@ -150,6 +171,15 @@ function humanize(result: unknown): string {
 function stringFlag(args: ParsedArgs, name: string): string | undefined {
   const value = args.flags[name]
   return typeof value === "string" ? value : undefined
+}
+
+function pathFlag(args: ParsedArgs, name: string): string {
+  const value = args.flags[name]
+  return typeof value === "string" && value.trim().length > 0 ? value : "."
+}
+
+function hasFlag(args: ParsedArgs, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(args.flags, name)
 }
 
 function numberFlag(args: ParsedArgs, name: string, fallback: number): number {

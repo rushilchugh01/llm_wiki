@@ -20,14 +20,64 @@ const PROJECT_DIRS = [
   ".obsidian",
 ]
 
+const PROJECT_FILES = [
+  "schema.md",
+  "purpose.md",
+  "wiki/index.md",
+  "wiki/log.md",
+  "wiki/overview.md",
+  ".obsidian/app.json",
+  ".obsidian/core-plugins.json",
+  ".llm-wiki/config.json",
+]
+
+export const PROJECT_INGEST_IGNORE_PATHS = [
+  "schema.md",
+  "purpose.md",
+  "raw",
+  "wiki",
+  ".llm-wiki",
+  ".obsidian",
+]
+
 export async function createProject(parentDir: string, name: string): Promise<CreatedProject> {
   assertCli(name.trim().length > 0, "Project name is required.")
-  const root = path.resolve(parentDir, name)
+  return createProjectAt(path.resolve(parentDir, name), name)
+}
+
+export async function createProjectAt(projectDir: string, name = path.basename(path.resolve(projectDir))): Promise<CreatedProject> {
+  assertCli(name.trim().length > 0, "Project name is required.")
+  const root = path.resolve(projectDir)
   assertCli(!(await exists(root)), `Directory already exists: ${root}`)
+  return initializeProjectAt(root, name)
+}
+
+export async function ensureProject(projectDir: string): Promise<void> {
+  try {
+    await validateProject(projectDir)
+    return
+  } catch {
+    // Fall through and initialize only when the destination is clearly unused.
+  }
+  const root = path.resolve(projectDir)
+  if (await exists(root)) {
+    const stat = await fs.stat(root)
+    assertCli(stat.isDirectory(), `Project destination is not a directory: ${root}`)
+    await assertNoProjectFileConflicts(root)
+  }
+  await initializeProjectAt(root)
+}
+
+async function initializeProjectAt(root: string, name = path.basename(root)): Promise<CreatedProject> {
   for (const dir of PROJECT_DIRS) await fs.mkdir(path.join(root, dir), { recursive: true })
   await writeInitialFiles(root)
   await writeDefaultConfig(root)
   return { name, path: root.replace(/\\/g, "/") }
+}
+
+export function projectIngestIgnorePaths(projectPath: string): string[] {
+  const root = path.resolve(projectPath)
+  return PROJECT_INGEST_IGNORE_PATHS.map((rel) => path.join(root, rel))
 }
 
 export async function validateProject(projectPath: string): Promise<void> {
@@ -42,6 +92,13 @@ export async function exists(filePath: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+async function assertNoProjectFileConflicts(root: string): Promise<void> {
+  for (const rel of PROJECT_FILES) {
+    const target = path.join(root, rel)
+    assertCli(!(await exists(target)), `Project destination already contains generated file path: ${target}`)
   }
 }
 
