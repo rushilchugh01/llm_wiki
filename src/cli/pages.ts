@@ -44,19 +44,26 @@ export async function readWikiPage(wikiRoot: string, filePath: string): Promise<
 
 export async function resolvePage(projectPath: string, ref: string): Promise<WikiPage> {
   const root = path.resolve(projectPath, "wiki")
-  const direct = await resolveDirectPage(projectPath, ref)
+  assertCli(!isAbsoluteRef(ref), `Page reference must stay inside wiki/: ${ref}`)
+  const normalized = normalizeRef(ref)
+  const direct = await resolveDirectPage(projectPath, normalized)
   if (direct) return readWikiPage(root, direct)
   const pages = await listWikiPages(projectPath)
-  const lowered = normalizeRef(ref)
+  const lowered = normalized
   const found = pages.find((p) =>
-    p.slug.toLowerCase() === lowered || p.relativePath.toLowerCase() === lowered
+    normalizeRef(p.slug) === lowered || normalizeRef(p.relativePath) === lowered
   )
   assertCli(found, `Page not found: ${ref}`)
   return found
 }
 
 export function normalizeRef(ref: string): string {
-  return ref.replace(/\\/g, "/").replace(/^wiki\//, "").replace(/\.md$/, "").toLowerCase()
+  return ref
+    .replace(/\\/g, "/")
+    .split("#")[0]
+    .replace(/^wiki\//, "")
+    .replace(/\.md$/, "")
+    .toLowerCase()
 }
 
 export function pageToJson(page: WikiPage): Record<string, unknown> {
@@ -106,9 +113,20 @@ async function resolveDirectPage(projectPath: string, ref: string): Promise<stri
 
 function candidatePaths(projectPath: string, ref: string): string[] {
   const normalized = ref.replace(/\\/g, "/")
-  if (path.isAbsolute(normalized)) return [normalized]
   const withExt = normalized.endsWith(".md") ? normalized : `${normalized}.md`
-  return PAGE_DIRS.map((dir) => path.resolve(projectPath, "wiki", dir, withExt))
+  const root = path.resolve(projectPath, "wiki")
+  return PAGE_DIRS
+    .map((dir) => path.resolve(root, dir, withExt))
+    .filter((candidate) => isInsideDir(root, candidate))
+}
+
+function isAbsoluteRef(ref: string): boolean {
+  return path.isAbsolute(ref) || path.win32.isAbsolute(ref)
+}
+
+function isInsideDir(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate)
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))
 }
 
 function inferType(relativePath: string): string {

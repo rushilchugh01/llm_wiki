@@ -6,6 +6,7 @@ import { buildSearchJson, searchPages } from "./search"
 import { pageToJson, resolvePage } from "./pages"
 import { lintProject } from "./lint"
 import { CliError, assertCli } from "./errors"
+import { NOOP_DEBUG, createDebugReporter, type DebugReporter } from "./debug"
 
 export interface CliIo {
   stdout: (text: string) => void
@@ -19,9 +20,10 @@ export interface ParsedArgs {
 }
 
 export async function runCli(argv: string[], io: CliIo): Promise<number> {
+  const args = parseArgs(argv)
+  const debug = createDebugReporter(Boolean(args.flags.debug), io.stderr)
   try {
-    const args = parseArgs(argv)
-    const result = await dispatch(args)
+    const result = await dispatch(args, debug)
     if (result !== undefined) io.stdout(formatResult(result, Boolean(args.flags.json)))
     return 0
   } catch (err) {
@@ -32,31 +34,39 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const [command = "help", ...rest] = argv
+  let command = "help"
+  let hasCommand = false
   const flags: Record<string, string | boolean> = {}
   const positionals: string[] = []
-  for (let i = 0; i < rest.length; i++) {
-    const item = rest[i]
+  for (let i = 0; i < argv.length; i++) {
+    const item = argv[i]
     if (!item.startsWith("--")) {
-      positionals.push(item)
+      if (hasCommand) {
+        positionals.push(item)
+      } else {
+        command = item
+        hasCommand = true
+      }
       continue
     }
-    const key = item.slice(2)
-    const next = rest[i + 1]
-    if (next && !next.startsWith("--")) {
+    const [key, inlineValue] = item.slice(2).split("=", 2)
+    const next = argv[i + 1]
+    if (inlineValue !== undefined) {
+      flags[key] = inlineValue
+    } else if (booleanFlag(key) || !next || next.startsWith("--")) {
+      flags[key] = true
+    } else {
       flags[key] = next
       i++
-    } else {
-      flags[key] = true
     }
   }
   return { command, positionals, flags }
 }
 
-export async function dispatch(args: ParsedArgs): Promise<unknown> {
+export async function dispatch(args: ParsedArgs, debug = NOOP_DEBUG): Promise<unknown> {
   if (args.command === "help") return helpText()
   if (args.command === "create") return createCommand(args)
-  if (args.command === "ingest") return ingestCommand(args)
+  if (args.command === "ingest") return ingestCommand(args, debug)
   if (args.command === "search") return searchCommand(args)
   if (args.command === "view") return viewCommand(args)
   if (args.command === "lint") return lintCommand(args)
@@ -76,19 +86,21 @@ function createCommand(args: ParsedArgs): Promise<unknown> {
   return createProject(parent, name)
 }
 
-async function ingestCommand(args: ParsedArgs): Promise<unknown> {
+async function ingestCommand(args: ParsedArgs, debug: DebugReporter): Promise<unknown> {
   const [project, source] = args.positionals
   assertCli(project && source, "Usage: llm-wiki ingest <project> <path>")
   await validateProject(project)
   const config = await loadConfig(project, process.env, configOverrides(args))
   const options: IngestOptions = {
     dryRun: Boolean(args.flags["dry-run"]),
-    yes: Boolean(args.flags.yes),
-    recursive: !args.flags["no-recursive"],
+    recursive: recursiveFlag(args, config.ingest.recursiveByDefault),
     include: listFlag(args, "include"),
     exclude: listFlag(args, "exclude"),
+    maxFiles: numberFlag(args, "max-files", config.ingest.maxFiles),
+    maxBytes: numberFlag(args, "max-bytes", config.ingest.maxBytes),
+    maxFileBytes: numberFlag(args, "max-file-bytes", config.ingest.maxFileBytes),
   }
-  return ingestPath(project, source, config, options)
+  return ingestPath(project, source, config, options, undefined, debug)
 }
 
 async function searchCommand(args: ParsedArgs): Promise<unknown> {
@@ -120,7 +132,9 @@ async function lintCommand(args: ParsedArgs): Promise<unknown> {
 function helpText(): string {
   return [
     "llm-wiki create <parent-dir> --name <name>",
-    "llm-wiki ingest <project> <path> [--dry-run] [--yes] [--no-recursive]",
+    "llm-wiki ingest <project> <path> [--dry-run] [--recursive] [--no-recursive] [--debug]",
+    "  [--max-files 500] [--max-bytes 26214400] [--max-file-bytes 2097152]",
+    "  [--provider custom] [--base-url <url>] [--api-key <key>] [--model <model>] [--reasoning off]",
     "llm-wiki search <project> <query> [--limit 10] [--type entity,concept] [--json]",
     "llm-wiki view <project> <page-or-slug> [--json]",
     "llm-wiki lint <project> [--json]",
@@ -140,7 +154,13 @@ function stringFlag(args: ParsedArgs, name: string): string | undefined {
 
 function numberFlag(args: ParsedArgs, name: string, fallback: number): number {
   const value = stringFlag(args, name)
-  return value ? Number.parseInt(value, 10) : fallback
+  if (!value) return fallback
+  const parsed = Number.parseInt(value, 10)
+  assertCli(
+    Number.isSafeInteger(parsed) && parsed > 0 && String(parsed) === value,
+    `--${name} must be a positive integer.`,
+  )
+  return parsed
 }
 
 function listFlag(args: ParsedArgs, name: string): string[] {
@@ -148,13 +168,23 @@ function listFlag(args: ParsedArgs, name: string): string[] {
   return value ? value.split(",").map((item) => item.trim()).filter(Boolean) : []
 }
 
+function booleanFlag(name: string): boolean {
+  return ["debug", "dry-run", "json", "no-recursive", "recursive"].includes(name)
+}
+
+function recursiveFlag(args: ParsedArgs, fallback: boolean): boolean {
+  if (args.flags["no-recursive"]) return false
+  if (args.flags.recursive) return true
+  return fallback
+}
+
 function configOverrides(args: ParsedArgs): ConfigOverrides {
   return {
-    provider: stringFlag(args, "provider") as ConfigOverrides["provider"],
+    provider: stringFlag(args, "provider"),
     apiKey: stringFlag(args, "api-key"),
     model: stringFlag(args, "model"),
     baseUrl: stringFlag(args, "base-url"),
-    reasoning: stringFlag(args, "reasoning") as ConfigOverrides["reasoning"],
+    reasoning: stringFlag(args, "reasoning"),
   }
 }
 

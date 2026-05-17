@@ -2,8 +2,8 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
-import { createProject, exists, validateProject } from "./project"
-import { listWikiPages, normalizeRef, pageToJson, readWikiPage, resolvePage } from "./pages"
+import { createProject, exists, validateProject } from "../project"
+import { listWikiPages, normalizeRef, pageToJson, readWikiPage, resolvePage } from "../pages"
 
 async function tempDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "llm-wiki-project-"))
@@ -46,7 +46,18 @@ describe("CLI project and pages", () => {
     expect(page.title).toBe("Attention")
     expect((await listWikiPages(project)).some((p) => p.slug === "attention")).toBe(true)
     await expect(resolvePage(project, "attention")).resolves.toMatchObject({ slug: "attention" })
+    await expect(resolvePage(project, "wiki/concepts/attention.md")).resolves.toMatchObject({ slug: "attention" })
     expect(pageToJson(page).relativePath).toBe("concepts/attention.md")
+  })
+
+  it("rejects page references outside wiki", async () => {
+    const parent = await tempDir()
+    const { path: project } = await createProject(parent, "Demo")
+    const outside = path.join(parent, "outside.md")
+    await fs.writeFile(outside, "# Outside\n")
+
+    await expect(resolvePage(project, outside)).rejects.toThrow("inside wiki")
+    await expect(resolvePage(project, "../../outside")).rejects.toThrow("Page not found")
   })
 
   it("normalizes page references", () => {

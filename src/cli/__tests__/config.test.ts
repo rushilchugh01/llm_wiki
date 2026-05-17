@@ -13,7 +13,7 @@ import {
   readConfigFile,
   writeDefaultConfig,
   type CliLlmConfig,
-} from "./config"
+} from "../config"
 
 async function tempDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "llm-wiki-config-"))
@@ -21,7 +21,9 @@ async function tempDir(): Promise<string> {
 
 describe("CLI config", () => {
   it("resolves the project config path", () => {
-    expect(configPath("/tmp/proj")).toBe("/tmp/proj/.llm-wiki/config.json")
+    expect(configPath(path.join("tmp", "proj"))).toBe(
+      path.join("tmp", "proj", ".llm-wiki", "config.json"),
+    )
   })
 
   it("merges nested config sections", () => {
@@ -39,6 +41,13 @@ describe("CLI config", () => {
     expect(cfg.llm.provider).toBe("ollama")
     expect(cfg.llm.model).toBe("llama3")
     expect(cfg.llm.ollamaUrl).toBe("http://localhost:11434")
+  })
+
+  it("rejects invalid provider and reasoning overrides", () => {
+    expect(() => applyEnv(DEFAULT_CONFIG, { LLM_WIKI_PROVIDER: "oops" })).toThrow("LLM_WIKI_PROVIDER")
+    expect(() => applyEnv(DEFAULT_CONFIG, { LLM_WIKI_REASONING: "banana" })).toThrow("LLM_WIKI_REASONING")
+    expect(() => applyOverrides(DEFAULT_CONFIG, { provider: "oops" })).toThrow("--provider")
+    expect(() => applyOverrides(DEFAULT_CONFIG, { reasoning: "banana" })).toThrow("--reasoning")
   })
 
   it("applies explicit overrides after config values", () => {
@@ -63,6 +72,6 @@ describe("CLI config", () => {
     const dir = await tempDir()
     await writeDefaultConfig(dir)
     const loaded = await loadConfig(dir, {}, {})
-    expect(loaded.ingest.maxFilesWithoutYes).toBe(DEFAULT_CONFIG.ingest.maxFilesWithoutYes)
+    expect(loaded.ingest.recursiveByDefault).toBe(DEFAULT_CONFIG.ingest.recursiveByDefault)
   })
 })

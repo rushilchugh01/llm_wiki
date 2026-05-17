@@ -1,5 +1,8 @@
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
+import { NOOP_DEBUG, type DebugReporter } from "./debug"
+import { assertCli } from "./errors"
 
 export interface WalkOptions {
   recursive: boolean
@@ -46,11 +49,35 @@ const TEXT_EXTENSIONS = new Set([
   ".go",
 ])
 
-export async function collectFiles(sourcePath: string, options: WalkOptions): Promise<string[]> {
+const BROAD_HOME_DIRS = new Set([
+  "desktop",
+  "documents",
+  "downloads",
+  "dropbox",
+  "google drive",
+  "icloud drive",
+  "my drive",
+  "onedrive",
+])
+
+export async function collectFiles(
+  sourcePath: string,
+  options: WalkOptions,
+  debug: DebugReporter = NOOP_DEBUG,
+): Promise<string[]> {
   const root = path.resolve(sourcePath)
+  const rootStat = await fs.lstat(root)
+  assertCli(!rootStat.isSymbolicLink(), `Refusing to ingest symbolic link source: ${root}`)
+  assertCli(samePath(await fs.realpath(root), root), `Refusing to ingest source through symbolic link path: ${root}`)
+  assertCli(
+    !isBroadSourceDirectory(root, rootStat.isDirectory()),
+    `Refusing to ingest broad source directory: ${root}. Choose a narrower subfolder.`,
+  )
   const gitignore = await loadGitignore(root)
   const out: string[] = []
-  await collect(root, root, options, gitignore, out)
+  debug.event("scan_start", { path: root, recursive: options.recursive })
+  await collect(root, root, options, gitignore, out, debug)
+  debug.event("scan_done", { path: root, fileCount: out.length })
   return out.sort()
 }
 
@@ -69,6 +96,19 @@ export function shouldSkip(
 export function isTextFile(filePath: string, includes: string[] = []): boolean {
   if (includes.some((pattern) => filePath.includes(pattern))) return true
   return TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+}
+
+export function isBroadSourceDirectory(
+  sourcePath: string,
+  isDirectory = true,
+  homeDir = os.homedir(),
+): boolean {
+  if (!isDirectory) return false
+  const root = path.resolve(sourcePath)
+  if (root === path.parse(root).root) return true
+  if (samePath(root, homeDir)) return true
+  if (isHomeDumpDir(root, homeDir)) return true
+  return isMountedDriveRoot(root)
 }
 
 export async function loadGitignore(root: string): Promise<string[]> {
@@ -90,10 +130,17 @@ async function collect(
   options: WalkOptions,
   gitignore: string[],
   out: string[],
+  debug: DebugReporter,
 ): Promise<void> {
   const stat = await fs.stat(current)
-  if (stat.isFile() && isTextFile(current, options.include)) {
-    if (shouldSkip(path.basename(current), path.relative(root, current), gitignore, options)) return
+  if (stat.isFile()) {
+    const rel = path.relative(root, current).replace(/\\/g, "/")
+    if (!shouldIncludeFile(current, rel, options.include)) return
+    if (shouldSkip(path.basename(current), rel, gitignore, options)) {
+      debug.event("scan_skip", { path: current, reason: "ignored" })
+      return
+    }
+    debug.event("scan_file", { path: current })
     out.push(current)
     return
   }
@@ -102,9 +149,19 @@ async function collect(
   for (const entry of entries) {
     const full = path.join(current, entry.name)
     const rel = path.relative(root, full).replace(/\\/g, "/")
-    if (shouldSkip(entry.name, rel, gitignore, options)) continue
-    if (entry.isDirectory() && !options.recursive) continue
-    await collect(full, root, options, gitignore, out)
+    if (entry.isSymbolicLink()) {
+      debug.event("scan_skip", { path: full, reason: "symlink" })
+      continue
+    }
+    if (shouldSkip(entry.name, rel, gitignore, options)) {
+      debug.event("scan_skip", { path: full, reason: "ignored" })
+      continue
+    }
+    if (entry.isDirectory() && !options.recursive) {
+      debug.event("scan_skip", { path: full, reason: "not-recursive" })
+      continue
+    }
+    await collect(full, root, options, gitignore, out, debug)
   }
 }
 
@@ -115,7 +172,30 @@ function matchesPattern(relativePath: string, entryName: string, pattern: string
   return relativePath === cleaned || relativePath.startsWith(`${cleaned}/`) || entryName === cleaned
 }
 
+function shouldIncludeFile(filePath: string, relativePath: string, includes: string[] = []): boolean {
+  if (!isTextFile(filePath)) return false
+  return includes.length === 0 || includes.some((pattern) => relativePath.includes(pattern))
+}
+
 function wildcardMatch(value: string, pattern: string): boolean {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")
   return new RegExp(`^${escaped}$`).test(value)
+}
+
+function isHomeDumpDir(sourcePath: string, homeDir: string): boolean {
+  const parent = path.dirname(sourcePath)
+  const name = path.basename(sourcePath).toLowerCase()
+  return samePath(parent, homeDir) && BROAD_HOME_DIRS.has(name)
+}
+
+function isMountedDriveRoot(sourcePath: string): boolean {
+  const parent = path.dirname(sourcePath)
+  const parentName = path.basename(parent).toLowerCase()
+  const grandparent = path.dirname(parent)
+  if (["/mnt", "/media", "/volumes"].some((dir) => samePath(parent, dir))) return true
+  return parentName === os.userInfo().username.toLowerCase() && samePath(grandparent, "/run/media")
+}
+
+function samePath(left: string, right: string): boolean {
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
 }

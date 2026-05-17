@@ -7,7 +7,7 @@
     "llm-wiki": "./src/cli/bin/llm-wiki.mjs"
   },
   "scripts": {
-    "build:cli": "vite build --config src/cli/vite.config.ts --logLevel error",
+    "build:cli": "node scripts/build-cli.mjs",
     "cli": "npm run build:cli --silent && node .llm-wiki-cli-build/llm-wiki.mjs",
     "dev": "vite",
     "typecheck": "tsc --build --pretty",

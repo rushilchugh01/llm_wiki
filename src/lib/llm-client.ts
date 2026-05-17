@@ -85,11 +85,12 @@ export async function streamChat(
   const timeoutMs = 30 * 60 * 1000 // 30 min — generous backstop for huge-context reasoning models
   let combinedSignal = signal
   let timeoutController: AbortController | undefined
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
   let timeoutFired = false
 
   if (typeof AbortSignal.timeout === "function") {
     timeoutController = new AbortController()
-    const timeoutId = setTimeout(() => {
+    timeoutId = setTimeout(() => {
       timeoutFired = true
       timeoutController?.abort()
     }, timeoutMs)
@@ -101,6 +102,10 @@ export async function streamChat(
       })
     }
     combinedSignal = timeoutController.signal
+  }
+  const clearBackstopTimeout = () => {
+    if (timeoutId) clearTimeout(timeoutId)
+    timeoutId = undefined
   }
 
   let response: Response
@@ -114,6 +119,7 @@ export async function streamChat(
       signal: combinedSignal,
     })
   } catch (err) {
+    clearBackstopTimeout()
     if (signal?.aborted) {
       onDone()
       return
@@ -145,6 +151,7 @@ export async function streamChat(
   }
 
   if (!response.ok) {
+    clearBackstopTimeout()
     let errorDetail = `HTTP ${response.status}: ${response.statusText}`
     try {
       const body = await response.text()
@@ -157,6 +164,7 @@ export async function streamChat(
   }
 
   if (!response.body) {
+    clearBackstopTimeout()
     onError(new Error("Response body is null"))
     return
   }
@@ -253,6 +261,7 @@ export async function streamChat(
     }
     onError(err instanceof Error ? err : new Error(String(err)))
   } finally {
+    clearBackstopTimeout()
     reader.releaseLock()
   }
 }

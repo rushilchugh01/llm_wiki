@@ -2,10 +2,10 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
-import { createProject } from "./project"
-import { buildSearchJson, scorePage, searchPages, tokenize } from "./search"
-import { buildInboundCounts, buildSlugMap, extractWikilinks, lintPage, lintProject } from "./lint"
-import { readWikiPage } from "./pages"
+import { createProject } from "../project"
+import { buildSearchJson, scorePage, searchPages, tokenize } from "../search"
+import { buildInboundCounts, buildSlugMap, extractWikilinks, lintPage, lintProject } from "../lint"
+import { readWikiPage } from "../pages"
 
 async function fixtureProject(): Promise<string> {
   const parent = await fs.mkdtemp(path.join(os.tmpdir(), "llm-wiki-search-"))

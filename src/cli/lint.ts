@@ -9,7 +9,7 @@ export interface CliLintResult {
 
 export async function lintProject(projectPath: string): Promise<CliLintResult[]> {
   const pages = await listWikiPages(projectPath)
-  const contentPages = pages.filter((p) => !["index.md", "log.md"].includes(p.relativePath))
+  const contentPages = pages.filter((p) => !["index.md", "log.md", "overview.md"].includes(p.relativePath))
   const slugMap = buildSlugMap(contentPages)
   const inbound = buildInboundCounts(contentPages, slugMap)
   return contentPages.flatMap((page) => lintPage(page, slugMap, inbound))
@@ -73,13 +73,13 @@ export function buildInboundCounts(
 }
 
 function hasTarget(slugMap: Map<string, string>, link: string): boolean {
-  const lower = link.toLowerCase()
+  const lower = link.toLowerCase().split("#")[0]
   const base = lower.split("/").pop()?.replace(/\.md$/, "") ?? lower
   return slugMap.has(lower) || slugMap.has(base)
 }
 
 function slugForCount(value: string): string {
-  return (value.split("/").pop() ?? value).replace(/\.md$/, "").toLowerCase()
+  return (value.split("#")[0].split("/").pop() ?? value).replace(/\.md$/, "").toLowerCase()
 }
 
 function info(page: WikiPage, type: "orphan" | "no-outlinks", detail: string): CliLintResult {
