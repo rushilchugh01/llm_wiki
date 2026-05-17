@@ -1,0 +1,89 @@
+name: CLI Binaries
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package-cli:
+    name: Package CLI (${{ matrix.artifact }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: node22-linux-x64
+            artifact: linux-x64
+            binary: llm-wiki-linux-x64
+            smoke: ./dist-cli/llm-wiki-linux-x64 help
+          - os: ubuntu-22.04-arm
+            target: node22-linux-arm64
+            artifact: linux-arm64
+            binary: llm-wiki-linux-arm64
+            smoke: ./dist-cli/llm-wiki-linux-arm64 help
+          - os: macos-13
+            target: node22-macos-x64
+            artifact: macos-x64
+            binary: llm-wiki-macos-x64
+            smoke: ./dist-cli/llm-wiki-macos-x64 help
+          - os: macos-latest
+            target: node22-macos-arm64
+            artifact: macos-arm64
+            binary: llm-wiki-macos-arm64
+            smoke: ./dist-cli/llm-wiki-macos-arm64 help
+          - os: windows-latest
+            target: node22-win-x64
+            artifact: windows-x64
+            binary: llm-wiki-windows-x64.exe
+            smoke: .\dist-cli\llm-wiki-windows-x64.exe help
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package CLI binary
+        env:
+          LLM_WIKI_PKG_TARGET: ${{ matrix.target }}
+        run: npm run package:cli
+
+      - name: Smoke test binary
+        run: ${{ matrix.smoke }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-wiki-cli-${{ matrix.artifact }}
+          path: |
+            dist-cli/${{ matrix.binary }}
+            dist-cli/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach binary to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --title "LLM Wiki ${GITHUB_REF_NAME}" --notes "See assets below for downloads."
+          gh release upload "${GITHUB_REF_NAME}" "dist-cli/${{ matrix.binary }}" "dist-cli/SHA256SUMS#SHA256SUMS-${{ matrix.artifact }}" --clobber

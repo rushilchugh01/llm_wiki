@@ -16,5 +16,11 @@ function isDirectRun(): boolean {
 }
 
 if (isDirectRun()) {
-  process.exitCode = await main()
+  void main().then(
+    (code) => { process.exitCode = code },
+    (err) => {
+      console.error(err instanceof Error ? err.message : String(err))
+      process.exitCode = 1
+    },
+  )
 }

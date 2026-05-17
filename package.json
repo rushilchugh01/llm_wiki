@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build:cli": "node scripts/build-cli.mjs",
+    "package:cli": "node scripts/package-cli-binary.mjs",
     "cli": "npm run build:cli --silent && node .llm-wiki-cli-build/llm-wiki.mjs",
     "dev": "vite",
     "typecheck": "tsc --build --pretty",
@@ -64,6 +65,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "@yao-pkg/pkg": "^6.19.0",
     "fast-check": "^4.7.0",
     "typescript": "^5.7.3",
     "vite": "^8.0.0",
